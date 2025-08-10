@@ -1,0 +1,108 @@
+# 📄 File: render.yaml
+
+services:
+  # 1. The PostgreSQL Database
+  - name: db
+    type: psql
+    plan: free
+    psqlVersion: 15
+
+  # 2. The Redis Cache / Message Broker
+  - name: redis
+    type: redis
+    plan: free
+
+  # 3. The FastAPI Web Service
+  - name: web
+    type: web
+    plan: free
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: psql
+          name: db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true # Render will generate a secure random string
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 30
+    autoDeploy: true # Automatically deploy on push to main branch
+    # Command to run on startup
+    startCommand: bash -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  # 4. The Celery Worker
+  - name: worker
+    type: worker
+    plan: free
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: psql
+          name: db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: web
+          envVarKey: SECRET_KEY
+    autoDeploy: true
+    # Command to start the worker
+    startCommand: celery -A app.worker.celery_app worker --loglevel=info
+
+  # 5. The Celery Beat Scheduler
+  - name: beat
+    type: worker # A worker that runs the beat scheduler
+    plan: free
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: psql
+          name: db
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: web
+          envVarKey: SECRET_KEY
+    autoDeploy: true
+    # Command to start the beat scheduler
+    startCommand: celery -A app.worker.celery_app beat --loglevel=info
